@@ -1,4 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
+import { ConfirmImportDialog } from "./ConfirmImportDialog";
+import { AI_MODEL_CONFIGS } from "@/config/ai";
+import type { ResumeData } from "@/types/resume";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslations, useLocale } from "@/i18n/compat/client";
 import { useRouter } from "@/lib/navigation";
@@ -25,9 +28,10 @@ import { ResumeCardItem } from "./ResumeCardItem";
 import { AnimatedImportButton } from "./AnimatedImportButton";
 import {
     extractJsonContent,
-    createResumeFromAIResult,
-    toStringArray
+    createResumeFromAIResult
 } from "./utils";
+import { readResumeImportFile } from "./importers/readResumeFile";
+import { extractImportHighlights } from "./importers/extractImportHighlights";
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 const MAX_PDF_IMPORT_PAGES = 3;
@@ -45,16 +49,28 @@ export const ResumeWorkbench = () => {
         createResume,
     } = useResumeStore();
     const {
+        selectedModel,
+        doubaoApiKey,
+        doubaoModelId,
+        deepseekApiKey,
+        deepseekModelId,
+        openaiApiKey,
+        openaiModelId,
+        openaiApiEndpoint,
         geminiApiKey,
         geminiModelId,
+        isConfigured,
     } = useAIConfigStore();
     const router = useRouter();
     const [hasConfiguredFolder, setHasConfiguredFolder] = useState(false);
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
-    const jsonFileInputRef = useRef<HTMLInputElement>(null);
-    const pdfFileInputRef = useRef<HTMLInputElement>(null);
+    const [pendingImportedResume, setPendingImportedResume] = useState<ResumeData | null>(null);
+    const [pendingImportOriginalText, setPendingImportOriginalText] = useState<string | null>(null);
+    const jsonFileInputRef = useRef<HTMLInputElement | null>(null);
+    const pdfFileInputRef = useRef<HTMLInputElement | null>(null);
+    const textFileInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         const loadSavedConfig = async () => {
@@ -183,20 +199,19 @@ export const ResumeWorkbench = () => {
         router.push({ to: "/app/workbench/$id", params: { id: newId } });
     };
 
-    const duplicateResume = async (resume: any) => {
+    const duplicateResume = async (resume: ResumeData) => {
         const { generateUUID } = await import("@/utils/uuid");
         const now = new Date().toISOString();
-        
-        const { id, ...rest } = resume;
-        const newResume = {
-            ...rest,
+
+        const newResume: ResumeData = {
+            ...resume,
             id: generateUUID(),
             title: `${resume.title || t("dashboard.resumes.untitled")} - ${t("common.copy")}`,
             createdAt: now,
             updatedAt: now,
         };
-        
-        const resumeId = addResume(newResume);
+
+        addResume(newResume);
         toast.success(t("previewDock.copyResume.success"));
     };
 
@@ -219,6 +234,73 @@ export const ResumeWorkbench = () => {
         setIsImportDialogOpen(false);
         toast.success(t("dashboard.resumes.importSuccess"));
         router.push({ to: "/app/workbench/$id", params: { id: resumeId } });
+    };
+
+    const getSelectedImportApiKey = () => {
+        if (selectedModel === "doubao") return doubaoApiKey;
+        if (selectedModel === "openai") return openaiApiKey;
+        if (selectedModel === "gemini") return geminiApiKey;
+        return deepseekApiKey;
+    };
+
+    const getSelectedImportModel = () => {
+        if (selectedModel === "doubao") return doubaoModelId;
+        if (selectedModel === "openai") return openaiModelId;
+        if (selectedModel === "gemini") return geminiModelId;
+
+        const config = AI_MODEL_CONFIGS[selectedModel];
+        return config.requiresModelId ? deepseekModelId : config.defaultModel;
+    };
+
+    const importResumeFromText = async (file: File) => {
+        if (!isConfigured()) {
+            toast.error(t("dashboard.resumes.importDialog.aiConfigRequired"));
+            router.push("/app/dashboard/ai");
+            return;
+        }
+
+        const apiKey = getSelectedImportApiKey();
+        const model = getSelectedImportModel();
+
+        const imported = await readResumeImportFile(file);
+
+        if (imported.kind !== "text") {
+            throw new Error("当前文件不是文本格式");
+        }
+
+        const response = await fetch("/api/resume-import", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                content: imported.text,
+                apiKey,
+                model,
+                modelType: selectedModel,
+                apiEndpoint: selectedModel === "openai" ? openaiApiEndpoint : undefined,
+                locale,
+            }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data?.error || "文本简历导入失败");
+        }
+
+        const aiResume = data?.resume;
+
+        if (!aiResume) {
+            throw new Error("AI 没有返回有效的简历结构");
+        }
+
+        const nameWithoutExt = file.name.replace(/\.[^.]+$/, "").trim();
+        const resume = createResumeFromAIResult(aiResume, nameWithoutExt);
+        setPendingImportedResume(resume);
+        setPendingImportOriginalText(imported.originalText);
+        setIsImportDialogOpen(false);
+        toast.success("AI 已解析简历，请确认导入结果");
     };
 
     const extractImagesFromPdf = async (file: File) => {
@@ -310,11 +392,10 @@ export const ResumeWorkbench = () => {
 
         const nameWithoutExt = file.name.replace(/\.[^.]+$/, "").trim();
         const resume = createResumeFromAIResult(aiResume, nameWithoutExt);
-        const resumeId = addResume(resume);
-        setActiveResume(resumeId);
+
+        setPendingImportedResume(resume);
         setIsImportDialogOpen(false);
-        toast.success(t("dashboard.resumes.importDialog.pdfSuccess"));
-        router.push({ to: "/app/workbench/$id", params: { id: resumeId } });
+        toast.success("AI 已解析简历，请确认导入结果");
     };
 
     const handleJsonFileChange = async (
@@ -333,6 +414,62 @@ export const ResumeWorkbench = () => {
         } finally {
             setIsImporting(false);
         }
+    };
+
+    const handleTextFileChange = async (
+        event: React.ChangeEvent<HTMLInputElement>
+    ) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+
+        if (!file || isImporting) return;
+
+        try {
+            setIsImporting(true);
+            await importResumeFromText(file);
+        } catch (error) {
+            console.error("Import text error:", error);
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : t("dashboard.resumes.importDialog.textReadError")
+            );
+        } finally {
+            setIsImporting(false);
+        }
+    };
+
+    const confirmImportResume = () => {
+        if (!pendingImportedResume) {
+            return;
+        }
+
+        const resumeId = addResume(pendingImportedResume);
+
+        setActiveResume(resumeId);
+
+        if (pendingImportOriginalText) {
+            const { keywords, paths } = extractImportHighlights(
+                pendingImportOriginalText,
+                pendingImportedResume
+            );
+
+            window.setTimeout(() => {
+                document.dispatchEvent(
+                    new CustomEvent("resume-agent-highlight-changes", {
+                        detail: {
+                            keywords,
+                            paths,
+                        },
+                    })
+                );
+            }, 500);
+        }
+
+        setPendingImportedResume(null);
+        setPendingImportOriginalText(null);
+        toast.success("简历导入成功");
+        router.push({ to: "/app/workbench/$id", params: { id: resumeId } });
     };
 
     const handlePdfFileChange = async (
@@ -522,6 +659,18 @@ export const ResumeWorkbench = () => {
                     pdfFileInputRef={pdfFileInputRef}
                     onJsonFileChange={handleJsonFileChange}
                     onPdfFileChange={handlePdfFileChange}
+                    textFileInputRef={textFileInputRef}
+                    onTextFileChange={handleTextFileChange}
+                />
+                <ConfirmImportDialog
+                    open={Boolean(pendingImportedResume)}
+                    resume={pendingImportedResume}
+                    onOpenChange={(open) => {
+                        if (!open) {
+                            setPendingImportedResume(null);
+                        }
+                    }}
+                    onConfirm={confirmImportResume}
                 />
             </motion.div>
         </ScrollArea>

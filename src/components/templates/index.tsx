@@ -7,16 +7,22 @@ import { ResumeTemplate } from "@/types/template";
 interface TemplateProps {
   data: ResumeData;
   template: ResumeTemplate;
+  highlightPaths?: string[];
 }
 
 const ResumeTemplateComponent: React.FC<TemplateProps> = ({
-  data,
-  template,
-}) => {
+                                                            data,
+                                                            template,
+                                                            highlightPaths,
+                                                          }) => {
   const TemplateComponent = getTemplateComponent(template.layout);
 
   return (
-    <TemplateProvider templateId={template.id} menuSections={data.menuSections}>
+      <TemplateProvider
+          templateId={template.id}
+          menuSections={data.menuSections}
+          highlightPaths={highlightPaths}
+      >
       <TemplateComponent data={data} template={template} />
     </TemplateProvider>
   );

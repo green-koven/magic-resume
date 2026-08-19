@@ -4,6 +4,8 @@ import { MenuSection } from "@/types/resume";
 interface TemplateContextProps {
   templateId: string;
   menuSections: MenuSection[];
+  highlightPaths?: string[];
+  isHighlighted: (path: string) => boolean;
 }
 
 const TemplateContext = createContext<TemplateContextProps | undefined>(undefined);
@@ -11,12 +13,15 @@ const TemplateContext = createContext<TemplateContextProps | undefined>(undefine
 export const TemplateProvider: React.FC<{
   templateId: string;
   menuSections: MenuSection[];
+  highlightPaths?: string[];
   children: React.ReactNode;
-}> = ({ templateId, menuSections, children }) => {
+}> = ({ templateId, menuSections, highlightPaths = [], children }) => {
+  const isHighlighted = (path: string) => highlightPaths.includes(path);
+
   return (
-    <TemplateContext.Provider value={{ templateId, menuSections }}>
-      {children}
-    </TemplateContext.Provider>
+      <TemplateContext.Provider value={{ templateId, menuSections, highlightPaths, isHighlighted }}>
+        {children}
+      </TemplateContext.Provider>
   );
 };
 

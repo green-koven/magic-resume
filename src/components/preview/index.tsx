@@ -1,6 +1,7 @@
 
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import throttle from "lodash/throttle";
+import Mark from "mark.js";
 import { toast } from "sonner";
 import { DEFAULT_TEMPLATES } from "@/components/templates/registry";
 import { cn } from "@/lib/utils";
@@ -76,20 +77,22 @@ const PreviewPanel = React.forwardRef<HTMLDivElement, PreviewPanelProps>(
       );
     }, [activeResume?.templateId]);
 
-    const startRef = useRef<HTMLDivElement>(null);
-    const previewRef = useRef<HTMLDivElement>(null);
-    const internalResumeContentRef = useRef<HTMLDivElement>(null);
-    const resumeContentRef = (ref as React.MutableRefObject<HTMLDivElement>) || internalResumeContentRef;
+    const startRef = useRef<HTMLDivElement | null>(null);
+    const previewRef = useRef<HTMLDivElement | null>(null);
+    const internalResumeContentRef = useRef<HTMLDivElement | null>(null);
+    const resumeContentRef = internalResumeContentRef;
     const [contentHeight, setContentHeight] = useState(0);
+    const [resumeAgentHighlightPaths, setResumeAgentHighlightPaths] = useState<string[]>([]);
 
     const updateContentHeight = () => {
-      if (resumeContentRef.current) {
-        const height = resumeContentRef.current.clientHeight;
-        if (height > 0) {
-          if (height !== contentHeight) {
-            setContentHeight(height);
-          }
-        }
+      const resumeElement = resumeContentRef.current;
+
+      if (!resumeElement) return;
+
+      const height = resumeElement.clientHeight;
+
+      if (height > 0 && height !== contentHeight) {
+        setContentHeight(height);
       }
     };
 
@@ -102,8 +105,10 @@ const PreviewPanel = React.forwardRef<HTMLDivElement, PreviewPanelProps>(
 
       const observer = new MutationObserver(debouncedUpdate);
 
-      if (resumeContentRef.current) {
-        observer.observe(resumeContentRef.current, {
+      const resumeElement = resumeContentRef.current;
+
+      if (resumeElement) {
+        observer.observe(resumeElement, {
           childList: true,
           subtree: true,
           attributes: true,
@@ -115,8 +120,8 @@ const PreviewPanel = React.forwardRef<HTMLDivElement, PreviewPanelProps>(
 
       const resizeObserver = new ResizeObserver(debouncedUpdate);
 
-      if (resumeContentRef.current) {
-        resizeObserver.observe(resumeContentRef.current);
+      if (resumeElement) {
+        resizeObserver.observe(resumeElement);
       }
 
       return () => {
@@ -131,6 +136,79 @@ const PreviewPanel = React.forwardRef<HTMLDivElement, PreviewPanelProps>(
         return () => clearTimeout(timer);
       }
     }, [activeResume]);
+
+    useEffect(() => {
+      const handleHighlightChanges = (event: Event) => {
+        const customEvent = event as CustomEvent<{
+          keywords?: string[];
+          paths?: string[];
+        }>;
+
+        const keywords = Array.isArray(customEvent.detail?.keywords)
+            ? customEvent.detail.keywords.filter(Boolean)
+            : [];
+
+        const paths = Array.isArray(customEvent.detail?.paths)
+            ? customEvent.detail.paths.filter(Boolean)
+            : [];
+
+        setResumeAgentHighlightPaths(paths);
+        const preview = resumeContentRef.current;
+
+        if (!preview) return;
+
+        const marker = new Mark(preview);
+        marker.unmark({
+          className: "resume-agent-change-mark",
+          done: () => {
+            if (keywords.length === 0) return;
+
+            marker.mark(keywords, {
+              separateWordSearch: false,
+              acrossElements: true,
+              className: "resume-agent-change-mark",
+              each: (element: HTMLElement) => {
+                element.setAttribute("title", "AI 本次修改后的内容");
+              },
+              done: () => {
+                const firstMark = preview.querySelector<HTMLElement>(
+                  "mark.resume-agent-change-mark"
+                );
+                const scrollContainer = firstMark?.closest<HTMLElement>(
+                  '[data-preview-scroll-container="true"]'
+                );
+
+                if (firstMark && scrollContainer) {
+                  const containerRect = scrollContainer.getBoundingClientRect();
+                  const markRect = firstMark.getBoundingClientRect();
+
+                  scrollContainer.scrollTo({
+                    top:
+                      scrollContainer.scrollTop +
+                      markRect.top -
+                      containerRect.top -
+                      80,
+                    behavior: "smooth",
+                  });
+                }
+              },
+            });
+          },
+        });
+      };
+
+      document.addEventListener(
+        "resume-agent-highlight-changes",
+        handleHighlightChanges
+      );
+
+      return () => {
+        document.removeEventListener(
+          "resume-agent-highlight-changes",
+          handleHighlightChanges
+        );
+      };
+    }, []);
 
     const pagePadding = activeResume?.globalSettings?.pagePadding || 0;
     const autoOnePageEnabled = activeResume?.globalSettings?.autoOnePage || false;
@@ -231,7 +309,7 @@ const PreviewPanel = React.forwardRef<HTMLDivElement, PreviewPanelProps>(
               }}
               className="relative"
             >
-              <style jsx global>{`
+              <style>{`
               .grammar-error {
                 cursor: help;
                 border-bottom: 2px dashed;
@@ -255,6 +333,35 @@ const PreviewPanel = React.forwardRef<HTMLDivElement, PreviewPanelProps>(
                 animation: highlight 2s ease-in-out;
               }
 
+              .resume-agent-change-mark {
+                background-color: rgba(16, 185, 129, 0.24);
+                border-bottom: 2px solid rgba(16, 185, 129, 0.7);
+                border-radius: 3px;
+                padding: 0 2px;
+                box-decoration-break: clone;
+                -webkit-box-decoration-break: clone;
+                animation: resumeAgentChangePulse 1.8s ease-in-out;
+              }
+
+              .resume-agent-field-highlight {
+              background-color: rgba(16, 185, 129, 0.18);
+              border-radius: 4px;
+              box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.35);
+              transition: background-color 0.2s ease, box-shadow 0.2s ease;
+              }
+
+              @keyframes resumeAgentChangePulse {
+                0% {
+                  background-color: rgba(16, 185, 129, 0);
+                }
+                25% {
+                  background-color: rgba(16, 185, 129, 0.35);
+                }
+                100% {
+                  background-color: rgba(16, 185, 129, 0.24);
+                }
+              }
+
               @keyframes highlight {
                 0% {
                   background-color: transparent;
@@ -270,7 +377,11 @@ const PreviewPanel = React.forwardRef<HTMLDivElement, PreviewPanelProps>(
                 }
               }
             `}</style>
-              <ResumeTemplateComponent data={activeResume} template={template} />
+              <ResumeTemplateComponent
+                  data={activeResume}
+                  template={template}
+                  highlightPaths={resumeAgentHighlightPaths}
+              />
               {contentHeight > 0 && (
                 <>
                   <div key={`page-breaks-container-${contentHeight}`}>

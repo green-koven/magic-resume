@@ -1,27 +1,42 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { formatGeminiErrorMessage, getGeminiModelInstance } from "@/lib/server/gemini";
+import {
+  formatGeminiErrorMessage,
+  getGeminiModelInstance,
+} from "@/lib/server/gemini";
+import { AI_MODEL_CONFIGS, AIModelType } from "@/config/ai";
 
 const parseJsonPayload = (content: string) => {
   const text = content.trim();
+
   try {
     return JSON.parse(text);
   } catch (error) {}
 
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) {
+  const fencedContent = fenced?.[1];
+  if (fencedContent) {
     try {
-      return JSON.parse(fenced[1].trim());
+      return JSON.parse(fencedContent.trim());
     } catch (error) {}
   }
 
-  const objectBlock = text.match(/\{[\s\S]*\}/);
-  if (objectBlock?.[0]) {
+  const objectBlock = text.match(/{[\s\S]*}/);
+  const objectContent = objectBlock?.[0];
+  if (objectContent) {
     try {
-      return JSON.parse(objectBlock[0]);
+      return JSON.parse(objectContent);
     } catch (error) {}
   }
 
   return null;
+};
+
+const parseUpstreamJson = (raw: string) => {
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 };
 
 const extractBase64Payload = (value: string) => {
@@ -45,9 +60,19 @@ export const Route = createFileRoute("/api/resume-import")({
       POST: async ({ request }) => {
         try {
           const body = await request.json();
-          const { apiKey, model, content, images, locale } = body as {
+          const {
+            apiKey,
+            model,
+            modelType = "gemini",
+            apiEndpoint,
+            content,
+            images,
+            locale,
+          } = body as {
             apiKey: string;
             model?: string;
+            modelType?: AIModelType;
+            apiEndpoint?: string;
             content?: string;
             images?: string[];
             locale?: string;
@@ -61,22 +86,8 @@ export const Route = createFileRoute("/api/resume-import")({
           }
 
           const language = locale === "en" ? "English" : "Chinese";
-          const geminiModel = model || "gemini-flash-latest";
-          const imageParts = Array.isArray(images)
-            ? images.map((image) => {
-                const payload = extractBase64Payload(image);
-                return {
-                  inlineData: {
-                    mimeType: payload.mimeType,
-                    data: payload.data,
-                  },
-                };
-              })
-            : [];
-          const modelInstance = getGeminiModelInstance({
-            apiKey,
-            model: geminiModel,
-            systemInstruction: `你是一个专业的简历结构化助手。根据用户提供的简历内容，提取信息并只输出一个合法 JSON 对象。
+
+          const systemPrompt = `你是一个专业的简历结构化助手。根据用户提供的简历内容，提取信息并只输出一个合法 JSON 对象。
 
 输出约束：
 1. 只允许输出 JSON，不要输出 Markdown，不要输出解释。
@@ -96,37 +107,111 @@ JSON 结构：
     "employementStatus": "",
     "birthDate": ""
   },
-  "education": [
-    {
-      "school": "",
-      "major": "",
-      "degree": "",
-      "startDate": "",
-      "endDate": "",
-      "gpa": "",
-      "description": ["", ""]
-    }
-  ],
-  "experience": [
-    {
-      "company": "",
-      "position": "",
-      "date": "",
-      "details": ["", ""]
-    }
-  ],
-  "projects": [
-    {
-      "name": "",
-      "role": "",
-      "date": "",
-      "description": ["", ""],
-      "link": "",
-      "linkLabel": ""
-    }
-  ],
-  "skills": ["", ""]
-}`,
+  "education": [],
+  "experience": [],
+  "projects": [],
+  "skills": []
+}`;
+
+          if (modelType !== "gemini") {
+            if (!content) {
+              return Response.json(
+                { error: "Only Gemini import supports image/PDF input for now" },
+                { status: 400 }
+              );
+            }
+
+            const modelConfig = AI_MODEL_CONFIGS[modelType];
+            if (!modelConfig) {
+              return Response.json(
+                { error: `Unsupported AI model type: ${modelType}` },
+                { status: 400 }
+              );
+            }
+
+            const response = await fetch(modelConfig.url(apiEndpoint), {
+              method: "POST",
+              headers: modelConfig.headers(apiKey),
+              body: JSON.stringify({
+                model: modelConfig.requiresModelId
+                  ? model
+                  : modelConfig.defaultModel,
+                response_format: {
+                  type: "json_object",
+                },
+                messages: [
+                  {
+                    role: "system",
+                    content: systemPrompt,
+                  },
+                  {
+                    role: "user",
+                    content,
+                  },
+                ],
+              }),
+            });
+
+            const raw = await response.text();
+
+            if (!response.ok) {
+              const errorData = parseUpstreamJson(raw);
+              const errorMessage =
+                errorData?.error?.message ||
+                errorData?.message ||
+                (raw
+                  ? raw.slice(0, 300)
+                  : `Upstream API error: ${response.status}`);
+
+              return Response.json(
+                { error: errorMessage },
+                { status: response.status }
+              );
+            }
+
+            const upstream = parseUpstreamJson(raw);
+            if (!upstream) {
+              const snippet = raw.trim().slice(0, 300);
+              return Response.json(
+                {
+                  error: snippet
+                    ? `AI provider returned non-JSON response: ${snippet}`
+                    : "AI provider returned empty response",
+                },
+                { status: 502 }
+              );
+            }
+
+            const aiContent = upstream?.choices?.[0]?.message?.content;
+            const parsedResume = parseJsonPayload(aiContent || raw);
+
+            if (!parsedResume) {
+              return Response.json(
+                { error: "Failed to parse AI JSON output" },
+                { status: 500 }
+              );
+            }
+
+            return Response.json({ resume: parsedResume });
+          }
+
+          const geminiModel = model || "gemini-flash-latest";
+          const imageParts = Array.isArray(images)
+            ? images.map((image) => {
+                const payload = extractBase64Payload(image);
+                return {
+                  inlineData: {
+                    mimeType: payload.mimeType,
+                    data: payload.data,
+                  },
+                };
+              })
+            : [];
+
+          const modelInstance = getGeminiModelInstance({
+            apiKey,
+            model: geminiModel,
+            systemInstruction: systemPrompt,
             generationConfig: {
               temperature: 0.2,
               responseMimeType: "application/json",
@@ -145,7 +230,7 @@ JSON 结构：
           const result = await modelInstance.generateContent(inputParts);
           const aiContent = result.response.text();
 
-          if (!aiContent || typeof aiContent !== "string") {
+          if (!aiContent) {
             return Response.json(
               { error: "AI did not return structured content" },
               { status: 500 }
@@ -167,6 +252,7 @@ JSON 结构：
             typeof (error as any)?.status === "number"
               ? (error as any).status
               : 500;
+
           return Response.json(
             { error: formatGeminiErrorMessage(error) },
             { status }

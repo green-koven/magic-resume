@@ -7,6 +7,7 @@ import {
   Edit2,
   Undo2,
   Redo2,
+  Sparkles,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useRouter } from "@/lib/navigation";
@@ -24,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { GrammarCheckDrawer } from "./grammar/GrammarCheckDrawer";
 import { getFileHandle, getConfig } from "@/utils/fileSystem";
+import { ResumeAgentDrawer } from "./agent/ResumeAgentDrawer";
 
 interface EditorHeaderProps {
   isMobile?: boolean;
@@ -46,6 +48,7 @@ export function EditorHeader({ isMobile }: EditorHeaderProps) {
 
   const [backupConfigured, setBackupConfigured] = useState<boolean | null>(null);
   const [backupPath, setBackupPath] = useState<string>("");
+  const [isAgentOpen, setIsAgentOpen] = useState(false);
 
   useEffect(() => {
     const checkBackup = async () => {
@@ -227,6 +230,22 @@ export function EditorHeader({ isMobile }: EditorHeaderProps) {
               </Tooltip>
             </TooltipProvider>
           </div>
+          <TooltipProvider delayDuration={100}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setIsAgentOpen(true)}
+                  aria-label="简历智能优化"
+                >
+                  <Sparkles className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">简历智能优化</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <GrammarCheckDrawer />
           {errors.length > 0 && (
              <div 
@@ -244,6 +263,7 @@ export function EditorHeader({ isMobile }: EditorHeaderProps) {
           <div className="md:flex items-center ">
             <PdfExport />
           </div>
+          <ResumeAgentDrawer open={isAgentOpen} onOpenChange={setIsAgentOpen} />
         </div>
       </div>
     </motion.header>

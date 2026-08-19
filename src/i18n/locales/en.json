@@ -130,7 +130,12 @@
         "importing": "Importing, please wait...",
         "geminiConfigRequired": "Please configure Gemini API Key and Model ID in AI settings first",
         "pdfSuccess": "PDF imported successfully",
-        "pdfError": "PDF import failed. Please check PDF content or Gemini configuration"
+        "pdfError": "PDF import failed. Please check PDF content or Gemini configuration",
+        "textTitle": "Import Text / Markdown / Word",
+        "textDescription": "Read resume content from .txt, .md, or .docx files",
+        "textReadSuccess": "Resume text loaded and ready for structuring",
+        "textReadError": "Failed to read the text file",
+        "aiConfigRequired": "Please configure the currently selected AI provider first"
       },
       "notice": {
         "title": "Attention",

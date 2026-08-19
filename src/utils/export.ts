@@ -30,6 +30,25 @@ const downloadTextFile = (content: string, fileName: string, mimeType: string) =
   downloadBlob(blob, fileName);
 };
 
+export const sanitizeResumeExportElement = (element: HTMLElement) => {
+  element
+    .querySelectorAll("mark.resume-agent-change-mark")
+    .forEach((mark) => {
+      mark.replaceWith(document.createTextNode(mark.textContent || ""));
+    });
+
+  const highlightedElements = [
+    ...(element.matches(".resume-agent-field-highlight") ? [element] : []),
+    ...Array.from(element.querySelectorAll<HTMLElement>(".resume-agent-field-highlight")),
+  ];
+
+  highlightedElements.forEach((highlightedElement) => {
+    highlightedElement.classList.remove("resume-agent-field-highlight");
+    highlightedElement.style.removeProperty("background-color");
+    highlightedElement.style.removeProperty("box-shadow");
+  });
+};
+
 export const getOptimizedStyles = () => {
   const styleCache = new Map();
   const startTime = performance.now();
@@ -200,20 +219,28 @@ export const exportToImage = async ({
       throw new Error(`Image element #${elementId} not found`);
     }
 
-    const pageBreakLines = Array.from(
-      element.querySelectorAll<HTMLElement>(".page-break-line")
-    );
-    const originalDisplays = pageBreakLines.map((line) => line.style.display);
-    pageBreakLines.forEach((line) => {
-      line.style.display = "none";
-    });
+    const clonedElement = element.cloneNode(true) as HTMLElement;
+    sanitizeResumeExportElement(clonedElement);
+    clonedElement.style.position = "absolute";
+    clonedElement.style.left = "-99999px";
+    clonedElement.style.top = "0";
+    clonedElement.style.width = `${Math.max(element.scrollWidth, element.clientWidth)}px`;
+    clonedElement.style.backgroundColor = "#ffffff";
+
+    clonedElement
+      .querySelectorAll<HTMLElement>(".page-break-line")
+      .forEach((line) => {
+        line.style.display = "none";
+      });
+
+    document.body.appendChild(clonedElement);
 
     try {
-      const width = Math.max(element.scrollWidth, element.clientWidth);
-      const height = Math.max(element.scrollHeight, element.clientHeight);
+      const width = Math.max(clonedElement.scrollWidth, clonedElement.clientWidth);
+      const height = Math.max(clonedElement.scrollHeight, clonedElement.clientHeight);
       const maxPixels = 12_000_000;
       const scale = Math.max(0.5, Math.min(2, Math.sqrt(maxPixels / (width * height))));
-      const canvas = await html2canvas(element, {
+      const canvas = await html2canvas(clonedElement, {
         backgroundColor: "#ffffff",
         scale,
         useCORS: true,
@@ -228,9 +255,7 @@ export const exportToImage = async ({
       });
       downloadBlob(blob, `${getSafeFileName(title)}.png`);
     } finally {
-      pageBreakLines.forEach((line, index) => {
-        line.style.display = originalDisplays[index];
-      });
+      document.body.removeChild(clonedElement);
     }
 
     if (successMessage) toast.success(successMessage);
@@ -262,6 +287,7 @@ export const exportToPdf = async ({
     }
 
     const clonedElement = pdfElement.cloneNode(true) as HTMLElement;
+    sanitizeResumeExportElement(clonedElement);
     const selectedFontFamily = normalizeFontFamily(fontFamily);
     const transformValue = clonedElement.style.transform || "";
     const scaleMatch = transformValue.match(/scale\(([\d.]+)\)/);

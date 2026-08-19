@@ -1,4 +1,5 @@
 import { getFontFaceCss, normalizeFontFamily } from "@/utils/fonts";
+import { sanitizeResumeExportElement } from "@/utils/export";
 
 export const exportResumeToBrowserPrint = async (
   resumeContent: HTMLElement,
@@ -26,6 +27,7 @@ export const exportResumeToBrowserPrint = async (
     iframeWindow.document.open();
 
     const clonedContent = resumeContent.cloneNode(true) as HTMLElement;
+    sanitizeResumeExportElement(clonedContent);
     const selectedFontFamily = normalizeFontFamily(fontFamily);
     const transformValue = clonedContent.style.transform || "";
     const match = transformValue.match(/scale\(([\d.]+)\)/);

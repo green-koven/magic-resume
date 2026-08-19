@@ -131,7 +131,12 @@
         "importing": "正在导入，请稍候...",
         "geminiConfigRequired": "请先在 AI 服务商设置页配置 Gemini API Key 和模型 ID",
         "pdfSuccess": "PDF 导入成功",
-        "pdfError": "PDF 导入失败，请检查 PDF 内容或 Gemini 配置"
+        "pdfError": "PDF 导入失败，请检查 PDF 内容或 Gemini 配置",
+        "textTitle": "导入文本 / Markdown / Word",
+        "textDescription": "读取 .txt、.md 或 .docx 格式的简历内容",
+        "textReadSuccess": "已读取简历文本，下一步将进行结构化处理",
+        "textReadError": "文本文件读取失败，请检查文件内容",
+        "aiConfigRequired": "请先在 AI 服务商设置页配置当前选中的模型"
       },
       "notice": {
         "title": "注意",
